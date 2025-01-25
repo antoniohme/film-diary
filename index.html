@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>FILM DIARY</title>
+        <link rel="stylesheet" href="styles.css">
+    </head>
+<body>
+    <header>
+        <button class="login-button-header" id="login-btn">Login</button>
+        <div class="header-title-container">
+            <div class="header-title">
+                <span class="header-title-line">FILM</span>
+                <span class="header-title-line">DIARY</span>
+            </div>
+            <div class="stats-container" id="stats-header">
+                <div class="header-stats" id="total-movies"></div>
+                <div class="header-stats" id="total-hours"></div>
+            </div>
+            <div class="quote-container">
+                <div class="header-quote">
+                   "I'd rather people <strong>feel</strong> a film before understanding it. I'd rather feelings arise before intellect." Robert Bresson’s words during the release of <strong>Pickpocket</strong>.
+                </div>
+            </div>
+        </div>
+    </header>
+    <div id="login-container">
+        <form class="login-form">
+            <button type="button" class="close-login">×</button>
+            <input type="email" id="email" placeholder="Email" required />
+            <input type="password" id="password" placeholder="Password" required />
+            <button type="submit">Login</button>
+        </form>
+    </div>
+    <div id="main-container">
+        <div class="filters">
+            <input type="text" id="search" placeholder="Search" />
+            <select id="filter-type">
+                <option value="all">All Types</option>
+                <option value="Short Film">Short Film</option>
+                <option value="Feature-Length">Feature-Length</option>
+                <option value="TV Season">TV Season</option>
+            </select>
+            <button id="filter-favorites">Favorites Only</button>
+            <button id="reset-filters">Reset Filters</button>
+            <button class="add-movie-btn" id="add-movie-btn" style="display: none;">+</button>
+        </div>
+        <div class="add-movie-container" id="add-movie-form">
+            <form class="add-movie-form">
+                <input type="text" id="movie-title" placeholder="Movie Title" required />
+                <input type="text" id="movie-director" placeholder="Director" required />
+                <input type="number" id="movie-year" placeholder="Year of Release" required />
+                <input type="date" id="movie-date" required />
+                <select id="movie-tag" required>
+                    <option value="" disabled selected>Type</option>
+                    <option value="Short Film">Short Film</option>
+                    <option value="Feature-Length">Feature-Length</option>
+                    <option value="TV Season">TV Season</option>
+                </select>
+                <div class="duration-input">
+                   <input type="number" id="movie-duration" placeholder="Duration (minutes)" required min="0"/>
+                </div>
+                <button type="submit">Add Movie</button>
+            </form>
+        </div>
+        <div class="stats" id="stats"></div>
+        <main id="diary"></main>
+        <footer>José Antonio Hernández</footer>
+   </div>
+   <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-app.js";
+    import { getFirestore, collection, addDoc, getDocs, updateDoc, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
+    import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
+
+    const firebaseConfig = {
+        apiKey: "AIzaSyDBBIMOkagMvUWyMGfkmM2r8TpCEnCgFyc",
+        authDomain: "antoniohme-diary.firebaseapp.com",
+        projectId: "antoniohme-diary",
+        storageBucket: "antoniohme-diary.firebasestorage.app",
+        messagingSenderId: "311879404095",
+        appId: "1:311879404095:web:6c7e9f858c93702869868a",
+        measurementId: "G-V8SK00BN27"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const auth = getAuth(app);
+
+    const loginContainer = document.getElementById('login-container');
+    const mainContainer = document.getElementById('main-container');
+    const addMovieContainer = document.getElementById('add-movie-form');
+    const form = addMovieContainer.querySelector('form');
+    const diary = document.getElementById('diary');
+    const searchInput = document.getElementById('search');
+    const filterType = document.getElementById('filter-type');
+    const filterFavorites = document.getElementById('filter-favorites');
+    const resetFilters = document.getElementById('reset-filters');
+    const stats = document.getElementById('stats');
+    const addMovieBtn = document.getElementById('add-movie-btn');
+    const loginButtonHeader = document.getElementById('login-btn');
+     const totalMoviesHeader = document.getElementById('total-movies');
+    const totalHoursHeader = document.getElementById('total-hours');
+
+    let favoriteFilter = false;
+    let searchQuery = '';
+    let filterTypeValue = 'all';
+    let isLoggedIn = false;
+    let debouncedSearch;
+
+    function debounce(func, delay) {
+        let timeout;
+        return function (...args) {
+            const context = this;
+            clearTimeout(timeout);
+            timeout = setTimeout(() => func.apply(context, args), delay);
+        };
+    }
+
+     async function saveEntry(entry) {
+        try {
+             const existingEntries = await getDocs(collection(db, "movies"));
+            const isFavorite = existingEntries.docs.some(doc => {
+                const data = doc.data();
+                return data.title === entry.title && data.director === entry.director && data.favorite === true;
+            });
+
+            if (isFavorite) {
+                entry.favorite = true;
+            }
+            const docRef = await addDoc(collection(db, "movies"), entry);
+            const docSnapshot = await getDoc(docRef);
+             const createdAt = docSnapshot.data().createdAt;
+                await updateDoc(docRef, { createdAt: createdAt}); // set the creation timestamp from firebase
+              loadEntries();
+        } catch (e) {
+            console.error("Error adding document: ", e);
+        }
+    }
+
+
+    async function loadEntries() {
+        try {
+            const querySnapshot = await getDocs(collection(db, "movies"));
+            const entries = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            renderEntries(entries);
+             renderStats(entries);
+            renderHeaderStats(entries);
+        } catch (e) {
+            console.error("Error loading documents: ", e);
+        }
+    }
+
+    async function updateEntry(id, updates) {
+        try {
+            const docRef = doc(db, "movies", id);
+            await updateDoc(docRef, updates);
+            loadEntries();
+        } catch (e) {
+            console.error("Error updating document: ", e);
+        }
+    }
+
+    async function deleteEntry(id) {
+        try {
+            const docRef = doc(db, "movies", id);
+            await deleteDoc(docRef);
+            loadEntries();
+        } catch (e) {
+            console.error("Error deleting document: ", e);
+        }
+    }
+
+    function renderStats(entries) {
+        const shortFilms = entries.filter(e => e.tag === 'Short Film').length;
+        const featureLength = entries.filter(e => e.tag === 'Feature-Length').length;
+        const tvSeasons = entries.filter(e => e.tag === 'TV Season').length;
+        stats.textContent = `Total: ${entries.length} | Short Films: ${shortFilms} | Feature-Length: ${featureLength} | TV Seasons: ${tvSeasons}`;
+    }
+
+    function renderHeaderStats(entries) {
+        const currentYear = new Date().getFullYear();
+        const currentYearEntries = entries.filter(entry => new Date(entry.date).getFullYear() === currentYear);
+
+        // Calculate unique movie count
+        const uniqueMovies = new Set();
+        currentYearEntries.forEach(entry => {
+            uniqueMovies.add(`${entry.title}-${entry.director}`);
+        });
+        const totalMovies = uniqueMovies.size;
+
+        // Calculate total duration in minutes
+        let totalDurationMinutes = 0;
+        currentYearEntries.forEach(entry => {
+            totalDurationMinutes += entry.duration ? entry.duration : 0;
+        });
+        const totalHours = Math.floor(totalDurationMinutes / 60);
+        const totalMinutes = totalDurationMinutes % 60;
+
+        totalMoviesHeader.textContent = `${totalMovies} MOVIES THIS YEAR`;
+        totalHoursHeader.textContent = `${totalHours}h ${totalMinutes}m WATCHED`;
+    }
+
+      function renderEntries(entries) {
+        diary.innerHTML = '';
+        const filteredEntries = filterEntries(entries);
+
+        // Sort entries by manually entered date (descending), creation date (descending) and document ID (descending)
+          filteredEntries.sort((a, b) => {
+            const dateA = new Date(a.date);
+            const dateB = new Date(b.date);
+
+            // Primary sort: manually entered date (newest first)
+            if (dateB - dateA !== 0) {
+                return dateB - dateA;
+            }
+
+            // Secondary sort: creation date (newest first) if manual dates are equal
+             const createdAtA = new Date(a.createdAt).getTime();
+              const createdAtB = new Date(b.createdAt).getTime();
+
+              if (createdAtB - createdAtA !== 0) {
+                  return createdAtB - createdAtA;
+                }
+
+             // Tertiary sort: document ID (newest first) if creation dates are equal
+             return b.id.localeCompare(a.id);
+        });
+
+        const groupedEntries = {};
+        const fragment = document.createDocumentFragment();
+        for (const entry of filteredEntries) {
+            const dateString = entry.date;
+            const [year, month, day] = dateString.split('-').map(Number);
+            const date = new Date(year, month - 1, day);
+            const displayYear = date.getFullYear();
+            const displayMonth = date.toLocaleString('default', { month: 'long' });
+            if (!groupedEntries[displayYear]) {
+                groupedEntries[displayYear] = {};
+            }
+            if (!groupedEntries[displayYear][displayMonth]) {
+                groupedEntries[displayYear][displayMonth] = [];
+            }
+            groupedEntries[displayYear][displayMonth].push(entry);
+        }
+        const sortedYears = Object.keys(groupedEntries).sort((a, b) => b - a);
+        for (const year of sortedYears) {
+            const yearDiv = document.createElement('div');
+            yearDiv.className = 'year';
+            yearDiv.textContent = year;
+            fragment.appendChild(yearDiv);
+            const sortedMonths = Object.keys(groupedEntries[year]).sort((a, b) => {
+                return new Date(`${year} ${a} 01`) - new Date(`${year} ${b} 01`);
+            });
+            for (const month of sortedMonths) {
+                const monthDiv = document.createElement('div');
+                monthDiv.className = 'month';
+                monthDiv.textContent = month;
+                fragment.appendChild(monthDiv);
+                for (const entry of groupedEntries[year][month]) {
+                    const entryDiv = document.createElement('div');
+                    entryDiv.className = 'entry';
+                    entryDiv.dataset.id = entry.id;
+                    const dateString = entry.date;
+                    const [entryYear, entryMonth, entryDay] = dateString.split('-').map(Number);
+                     const date = new Date(entryYear, entryMonth - 1, entryDay);
+                    entryDiv.innerHTML = `
+                         <span class="favorite ${entry.favorite ? 'selected' : ''}" data-id="${entry.id}">★</span>
+                         <div class="date-box">
+                             <span>${date.toLocaleString('en-US', { month: 'short' }).toUpperCase()}</span>
+                             <span>${date.getDate()}</span>
+                         </div>
+                        <div class="movie-info">
+                            <span class="movie-title">${entry.title}</span>
+                            <span class="director">Director: ${entry.director}</span>
+                            <span class="details">${entry.year} - ${entry.tag}</span>
+                             <span class="duration"> ${entry.duration ? entry.duration + ' min' : ''}</span>
+                         </div>
+                         <div class="actions">
+                         ${isLoggedIn ? `<button class="action-btn delete">Delete</button>` : ''}
+                        </div>
+                     `;
+                    fragment.appendChild(entryDiv);
+                }
+            }
+        }
+        diary.appendChild(fragment);
+}
+
+
+    function filterEntries(entries) {
+        let filteredEntries = entries;
+        if (favoriteFilter) {
+            filteredEntries = filteredEntries.filter(e => e.favorite);
+        }
+        if (filterTypeValue !== 'all') {
+            filteredEntries = filteredEntries.filter(e => e.tag === filterTypeValue);
+        }
+        if (searchQuery) {
+            const lowerQuery = searchQuery.toLowerCase();
+            filteredEntries = filteredEntries.filter(e =>
+                e.title.toLowerCase().includes(lowerQuery) ||
+                e.director.toLowerCase().includes(lowerQuery) ||
+                e.year.toString().includes(lowerQuery) ||
+                e.tag.toLowerCase().includes(lowerQuery)
+            );
+        }
+        return filteredEntries;
+    }
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (!isLoggedIn) {
+            alert('You must be logged in to add a movie.');
+            return;
+        }
+        const entry = {
+            title: document.getElementById('movie-title').value,
+            director: document.getElementById('movie-director').value,
+            year: document.getElementById('movie-year').value,
+            date: document.getElementById('movie-date').value,
+            tag: document.getElementById('movie-tag').value,
+            favorite: false,
+             createdAt: new Date(),
+            duration: parseInt(document.getElementById('movie-duration').value) || 0 //Ensure duration defaults to 0 if input is not present.
+        };
+        await saveEntry(entry);
+        form.reset();
+        addMovieContainer.classList.remove('active');
+    });
+
+     diary.addEventListener('click', async (e) => {
+        const target = e.target;
+        if (target.classList.contains('delete')) {
+            if (!isLoggedIn) {
+                alert('You must be logged in to delete a movie.');
+                return;
+            }
+            const entry = target.closest('.entry');
+            if (entry && confirm('Are you sure you want to delete this entry?')) {
+                await deleteEntry(entry.dataset.id);
+            }
+        } else if (target.classList.contains('favorite')) {
+             if (!isLoggedIn) {
+                 alert('You must be logged in to favorite a movie.');
+                 return;
+            }
+            const entryId = target.dataset.id;
+            const isCurrentlyFavorite = target.classList.contains('selected');
+            const entryElement = target.closest('.entry');
+            const title = entryElement.querySelector('.movie-title').textContent;
+            const director = entryElement.querySelector('.director').textContent.replace('Director: ', '');
+
+           try {
+                const querySnapshot = await getDocs(collection(db, "movies"));
+                   querySnapshot.forEach(async (doc) => {
+                       const data = doc.data();
+                     if (data.title === title && data.director === director) {
+                           await updateEntry(doc.id, { favorite: !isCurrentlyFavorite });
+                       }
+                  });
+              } catch (error) {
+                   console.error("Error updating favorites:", error);
+           }
+       }
+   });
+
+    searchInput.addEventListener('input', (e) => {
+        searchQuery = e.target.value.toLowerCase();
+        if (debouncedSearch) {
+            clearTimeout(debouncedSearch);
+        }
+        debouncedSearch = setTimeout(() => {
+            loadEntries()
+        }, 300);
+    });
+
+    filterType.addEventListener('change', (e) => {
+        filterTypeValue = e.target.value;
+        loadEntries();
+    });
+
+    filterFavorites.addEventListener('click', () => {
+        favoriteFilter = !favoriteFilter;
+        loadEntries();
+    });
+
+    resetFilters.addEventListener('click', () => {
+        favoriteFilter = false;
+        filterTypeValue = 'all';
+        searchQuery = '';
+        searchInput.value = '';
+        filterType.value = 'all';
+        loadEntries();
+    });
+
+    addMovieBtn.addEventListener('click', () => {
+        addMovieContainer.classList.toggle('active');
+    });
+
+    loginButtonHeader.addEventListener('click', () => {
+        loginContainer.classList.add('active');
+    });
+
+    loginContainer.addEventListener('click', (e) => {
+        if (e.target === loginContainer) {
+            loginContainer.classList.remove('active');
+        }
+    });
+
+    loginContainer.querySelector('.close-login').addEventListener('click', (e) => {
+        loginContainer.classList.remove('active');
+    });
+
+    loginContainer.querySelector('form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+        try {
+            await signInWithEmailAndPassword(auth, email, password);
+            loginContainer.classList.remove('active');
+            addMovieBtn.style.display = 'block';
+            mainContainer.style.display = 'block';
+            isLoggedIn = true;
+            loadEntries();
+        } catch (error) {
+            console.error(error);
+        }
+    });
+
+    onAuthStateChanged(auth, (user) => {
+        if (user) {
+            loginContainer.classList.remove('active');
+            addMovieBtn.style.display = 'block';
+            mainContainer.style.display = 'block';
+            loginButtonHeader.textContent = 'Log out';
+            loginButtonHeader.removeEventListener('click', loginButtonHeaderClickHandler)
+            loginButtonHeader.addEventListener('click', logOutHandler);
+            isLoggedIn = true;
+        } else {
+            loginButtonHeader.textContent = 'Login';
+            loginButtonHeader.removeEventListener('click', logOutHandler);
+            loginButtonHeader.addEventListener('click', loginButtonHeaderClickHandler);
+            loginContainer.classList.remove('active');
+            mainContainer.style.display = 'block';
+            addMovieBtn.style.display = 'none';
+            addMovieContainer.classList.remove('active');
+            isLoggedIn = false;
+        }
+    });
+
+    function loginButtonHeaderClickHandler() {
+        loginContainer.classList.add('active');
+    }
+
+    async function logOutHandler() {
+        try {
+            await signOut(auth);
+        } catch (error) {
+            console.error('Error during logout:', error);
+        }
+    }
+
+    loadEntries();
+</script>
+</body>
+</html>
